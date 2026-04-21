@@ -1,14 +1,12 @@
 
 import os
 import sys
-import json
 import cv2
 import shutil
-from dataclasses import dataclass, asdict
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QProcess, QProcessEnvironment
-from PySide6.QtGui import QImage, QPixmap, QIcon, QTextCursor
+from PySide6.QtGui import QImage, QPixmap, QIcon, QTextCursor, QAction
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -32,66 +30,32 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QScrollArea,
 )
+from core.config import AppConfig, load_app_config, save_app_config
+from core.paths import (
+    ANIMAL_DATASET_DIR,
+    ANIMAL_MODELS_DIR,
+    AVA_ALERT_BACKEND,
+    BASE_DIR,
+    CONFIG_DIR,
+    DEFAULT_CONFIG_PATH,
+    EVENTS_DIR,
+    FOOD_QUALITY_BACKEND,
+    KNOWN_FACES_DIR,
+    LIVE_FRAME_DIR,
+    LIVE_FRAME_PATH,
+    NOTES_FILE,
+    STATUS_FILE,
+    STOP_FILE,
+    WEED_SPRAYER_BACKEND,
+)
 
 APP_TITLE = "A.V.A. Control Panel"
 APP_SUBTITLE = "Agriculture • Video • AI"
-
-BASE_DIR = r"C:\scare_ai"
-CONFIG_DIR = os.path.join(BASE_DIR, "configs")
-DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, "scare_ai_ui_config.json")
-KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
-ANIMAL_DATASET_DIR = os.path.join(BASE_DIR, "animal_dataset")
-ANIMAL_MODELS_DIR = os.path.join(BASE_DIR, "animal_models")
-EVENTS_DIR = os.path.join(BASE_DIR, "events")
-STOP_FILE = os.path.join(BASE_DIR, "stop_signal.txt")
-STATUS_FILE = os.path.join(BASE_DIR, "status.txt")
-NOTES_FILE = os.path.join(CONFIG_DIR, "ava_operator_notes.txt")
-LIVE_FRAME_DIR = os.path.join(BASE_DIR, "status_frames")
-LIVE_FRAME_PATH = os.path.join(LIVE_FRAME_DIR, "live_view.jpg")
-
-AVA_ALERT_BACKEND = os.path.join(BASE_DIR, "scare_ai_v4.py")
-FOOD_QUALITY_BACKEND = os.path.join(BASE_DIR, "backends", "food_quality_backend.py")
-WEED_SPRAYER_BACKEND = os.path.join(BASE_DIR, "backends", "weed_sprayer_backend.py")
 
 RELAY1_ON = bytes.fromhex("A0 01 01 A2")
 RELAY1_OFF = bytes.fromhex("A0 01 00 A1")
 RELAY2_ON = bytes.fromhex("A0 02 01 A3")
 RELAY2_OFF = bytes.fromhex("A0 02 00 A2")
-
-
-@dataclass
-class AppConfig:
-    active_mode: str = "AVA Alert"
-    camera_index: int = 0
-    frame_width: int = 320
-    frame_height: int = 240
-    face_match_threshold: float = 0.35
-    animal_classifier_confidence: float = 0.60
-    warning_duration: int = 10
-    alarm_duration: int = 10
-    known_cooldown: int = 3
-    post_alarm_cooldown: int = 5
-    frame_skip: int = 3
-    person_confirm_frames: int = 2
-    animal_confirm_frames: int = 2
-    enable_strobe: bool = True
-    enable_horn: bool = True
-    enable_event_photos: bool = True
-    relay_port: str = "COM5"
-    relay_baud: int = 9600
-    weed_conf_threshold: float = 0.15
-    weed_frame_skip: int = 3
-    weed_spray_cooldown: float = 3.0
-    weed_spray_duration: float = 1.0
-    weed_zone_x_min: float = 0.30
-    weed_zone_x_max: float = 0.70
-    weed_zone_y_min: float = 0.30
-    weed_zone_y_max: float = 0.70
-    food_conf_threshold: float = 0.55
-    food_frame_skip: int = 3
-    food_simulation_interval: float = 5.0
-    food_infer_width: int = 224
-    food_infer_height: int = 224
 
 
 class AppState(QObject):
@@ -857,19 +821,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.notes_edit)
 
     def load_config(self, path: str) -> AppConfig:
-        if not os.path.exists(path):
-            return AppConfig()
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return AppConfig(**data)
-        except Exception:
-            return AppConfig()
+        return load_app_config(path)
 
     def save_config(self, path: str):
         cfg = self.read_widgets()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(asdict(cfg), f, indent=2)
+        save_app_config(path, cfg)
         self.config = cfg
         self.append_log(f"[UI] Config saved: {path}")
         self.state.set_status(f"Config saved: {path}")
@@ -1419,7 +1375,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-def start_engine(self):
+    def start_engine(self):
         self.apply_settings()
         self.clear_engine_preview_file()
         if self.camera_running():

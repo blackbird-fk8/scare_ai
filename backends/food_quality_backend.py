@@ -1,37 +1,32 @@
+"""
+Food Quality Detection Backend
+
+Monitors food freshness using YOLO classification model.
+Provides real-time quality status (GOOD, WARNING, BAD) via status file.
+"""
+
 import os
 import sys
-import json
 import time
 import cv2
 
-BASE_DIR = r"C:\scare_ai"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
+from core.config import load_app_config
+from core.logger import setup_logger
+from core.paths import DEFAULT_CONFIG_PATH, FOOD_MODEL_PATH, LIVE_FRAME_DIR, LIVE_FRAME_PATH, STATUS_FILE, STOP_FILE
+
+logger = setup_logger(__name__)
+
 try:
     from ultralytics import YOLO
-except Exception:
+except ImportError:
+    logger.error("ultralytics not installed. Install with: pip install ultralytics")
     YOLO = None
 
-DEFAULT_CONFIG_PATH = os.path.join(BASE_DIR, "configs", "scare_ai_ui_config.json")
 CONFIG_PATH = os.environ.get("SCARE_AI_CONFIG", DEFAULT_CONFIG_PATH)
-
-STOP_FILE = os.path.join(BASE_DIR, "stop_signal.txt")
-STATUS_FILE = os.path.join(BASE_DIR, "status.txt")
-LIVE_FRAME_DIR = os.path.join(BASE_DIR, "status_frames")
-LIVE_FRAME_PATH = os.path.join(LIVE_FRAME_DIR, "live_view.jpg")
-FOOD_MODEL_PATH = os.path.join(BASE_DIR, "food_models", "food_quality_v1", "weights", "best.pt")
-
-DEFAULTS = {
-    "camera_index": 0,
-    "frame_width": 320,
-    "frame_height": 240,
-    "food_conf_threshold": 0.55,
-    "food_frame_skip": 3,
-    "food_simulation_interval": 5.0,
-    "food_infer_width": 224,
-    "food_infer_height": 224,
-}
 
 STATUS_MAP = {
     "good": "GOOD",
@@ -49,80 +44,80 @@ STATUS_MAP = {
     "spoiled": "BAD",
 }
 
-def load_ui_config(path: str):
-    cfg = DEFAULTS.copy()
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                cfg.update(data)
-        except Exception as e:
-            print(f"[WARN] Failed to read config: {e}")
-    else:
-        print(f"[WARN] Config not found, using defaults: {path}")
-    return cfg
+CFG = load_app_config(CONFIG_PATH, logger=logger)
+CAMERA_INDEX = CFG.camera_index
+FRAME_WIDTH = CFG.frame_width
+FRAME_HEIGHT = CFG.frame_height
+CONFIDENCE_THRESHOLD = CFG.food_conf_threshold
+FRAME_SKIP = CFG.food_frame_skip
+SIMULATION_INTERVAL_SEC = CFG.food_simulation_interval
+INFER_WIDTH = CFG.food_infer_width
+INFER_HEIGHT = CFG.food_infer_height
 
-CFG = load_ui_config(CONFIG_PATH)
-CAMERA_INDEX = int(CFG.get("camera_index", 0))
-FRAME_WIDTH = int(CFG.get("frame_width", 320))
-FRAME_HEIGHT = int(CFG.get("frame_height", 240))
-CONFIDENCE_THRESHOLD = float(CFG.get("food_conf_threshold", 0.55))
-FRAME_SKIP = int(CFG.get("food_frame_skip", 3))
-SIMULATION_INTERVAL_SEC = float(CFG.get("food_simulation_interval", 5.0))
-INFER_WIDTH = int(CFG.get("food_infer_width", 224))
-INFER_HEIGHT = int(CFG.get("food_infer_height", 224))
-
-def write_status(value: str):
+def write_status(value: str) -> bool:
+    """Write status to file for UI monitoring. Returns True if successful."""
     try:
         with open(STATUS_FILE, "w", encoding="utf-8") as f:
             f.write(f"FOOD:{value}")
-    except Exception:
-        pass
+        return True
+    except IOError as e:
+        logger.warning(f"Failed to write status: {e}")
+        return False
 
-def remove_status_file():
+def remove_status_file() -> bool:
+    """Remove status file. Returns True if successful or file didn't exist."""
     try:
         if os.path.exists(STATUS_FILE):
             os.remove(STATUS_FILE)
-    except Exception:
-        pass
+        return True
+    except OSError as e:
+        logger.warning(f"Failed to remove status file: {e}")
+        return False
 
-def ensure_live_frame_dir():
+def ensure_live_frame_dir() -> None:
+    """Create live frame directory if it doesn't exist."""
     try:
         os.makedirs(LIVE_FRAME_DIR, exist_ok=True)
-    except Exception:
-        pass
+    except OSError as e:
+        logger.error(f"Failed to create live frame directory: {e}")
 
-def write_live_frame(frame):
+def write_live_frame(frame) -> bool:
+    """Write current frame to live view file. Returns True if successful."""
     try:
         ensure_live_frame_dir()
-        cv2.imwrite(LIVE_FRAME_PATH, frame)
-    except Exception:
-        pass
+        if frame is not None and cv2.imwrite(LIVE_FRAME_PATH, frame):
+            return True
+        logger.debug("Failed to write live frame")
+        return False
+    except Exception as e:
+        logger.warning(f"Error writing live frame: {e}")
+        return False
 
-def clear_live_frame():
+def clear_live_frame() -> bool:
+    """Delete live view file. Returns True if successful or file didn't exist."""
     try:
         if os.path.exists(LIVE_FRAME_PATH):
             os.remove(LIVE_FRAME_PATH)
-    except Exception:
-        pass
+        return True
+    except OSError as e:
+        logger.warning(f"Failed to delete live frame: {e}")
+        return False
 
 def load_food_model():
+    """Load YOLO food quality model or return None for simulation mode."""
     if YOLO is None:
-        print("[WARN] Ultralytics is not available. Using simulation mode.")
+        logger.warning("Ultralytics not available. Using simulation mode.")
         return None
 
     if os.path.exists(FOOD_MODEL_PATH):
-        print(f"[INFO] Loading food quality model: {FOOD_MODEL_PATH}")
+        logger.info(f"Loading food quality model: {FOOD_MODEL_PATH}")
         try:
             return YOLO(FOOD_MODEL_PATH)
         except Exception as e:
-            print(f"[WARN] Failed to load food model: {e}")
-            print("[INFO] Falling back to simulation mode.")
+            logger.warning(f"Failed to load food model: {e}. Falling back to simulation mode.")
             return None
 
-    print(f"[INFO] Food model not found: {FOOD_MODEL_PATH}")
-    print("[INFO] Using simulation mode.")
+    logger.info(f"Food model not found: {FOOD_MODEL_PATH}. Using simulation mode.")
     return None
 
 def normalize_label(label: str) -> str:
@@ -155,7 +150,7 @@ def classify_food_frame(frame, model):
         ui_status = map_label_to_status(class_name, top1_conf)
         return class_name, top1_conf, ui_status
     except Exception as e:
-        print(f"[WARN] Inference failed: {e}")
+        logger.warning(f"Inference failed: {e}")
         return "unknown", 0.0, "WARNING"
 
 def get_simulated_status(last_switch_time, current_status):
@@ -194,9 +189,10 @@ def draw_overlay(frame, mode_text: str, status: str, label: str = None, confiden
         cv2.putText(frame, detail, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
 def main():
-    print("[INFO] Food config path:", CONFIG_PATH)
-    print("[INFO] Camera:", CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT)
-    print("[INFO] Food tuning:", CONFIDENCE_THRESHOLD, FRAME_SKIP, SIMULATION_INTERVAL_SEC, INFER_WIDTH, INFER_HEIGHT)
+    """Main food quality monitoring loop."""
+    logger.info(f"Food config path: {CONFIG_PATH}")
+    logger.info(f"Camera: {CAMERA_INDEX} {FRAME_WIDTH}x{FRAME_HEIGHT}")
+    logger.info(f"Food tuning: conf={CONFIDENCE_THRESHOLD}, skip={FRAME_SKIP}, interval={SIMULATION_INTERVAL_SEC}s, infer={INFER_WIDTH}x{INFER_HEIGHT}")
     ensure_live_frame_dir()
     clear_live_frame()
 
@@ -204,7 +200,7 @@ def main():
 
     cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
     if not cap.isOpened():
-        print("[ERROR] Could not open camera.")
+        logger.error("Could not open camera.")
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
@@ -221,12 +217,12 @@ def main():
     try:
         while True:
             if os.path.exists(STOP_FILE):
-                print("[INFO] Stop signal received.")
+                logger.info("Stop signal received.")
                 break
 
             ret, frame = cap.read()
             if not ret:
-                print("[ERROR] Failed to read frame.")
+                logger.error("Failed to read frame.")
                 break
 
             frame_count += 1
